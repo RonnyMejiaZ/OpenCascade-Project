@@ -1,0 +1,21 @@
+{
+  "name": "step-generator-backend",
+  "version": "1.0.0",
+  "description": "Backend para generar archivos STEP usando OpenCASCADE WASM",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "multer": "^1.4.5-lts.1",
+    "uuid": "^9.0.0",
+    "opencascade.js": "^2.0.0-beta.b5ff984"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
