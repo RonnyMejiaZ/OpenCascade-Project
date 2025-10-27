@@ -1,7 +1,26 @@
+/**
+ * Aplicación de Exportación STEP - Frontend Only
+ * 
+ * Esta aplicación permite crear y exportar modelos 3D como archivos STEP
+ * directamente en el navegador usando OpenCASCADE.js (WebAssembly).
+ * 
+ * Características:
+ * - Sin servidor backend (100% frontend)
+ * - Visualización 3D con model-viewer
+ * - Exportación directa a formato STEP
+ * - Gestión automática de memoria WebAssembly
+ * 
+ * Tecnologías:
+ * - React + Vite
+ * - OpenCASCADE.js (WebAssembly)
+ * - Google Model Viewer
+ */
+
 import "@google/model-viewer";
 import initOpenCascade from "opencascade.js";
 import { visualizeShapes } from "../js/visualize.js";
 import { useEffect, useState } from "react";
+import NotchConfigurationPanel from "./NotchConfigurationPanel";
 
 
 export const App = () => {
@@ -11,24 +30,96 @@ export const App = () => {
   const [occ, setOcc] = useState(null);
   const [boxShape, setBoxShape] = useState(null);
   const [exporting, setExporting] = useState(false);
+  // Configuración inicial de muescas
+  const initialNotches = [
+    { start: 0.730, end: 0.860, name: "Notch 1" },
+    { start: 1.800, end: 1.930, name: "Notch 2" },
+    { start: 2.250, end: 2.380, name: "Notch 3" },
+    { start: 3.120, end: 3.250, name: "Notch 4" },
+    { start: 3.900, end: 4.030, name: "Notch 5" },
+    { start: 4.220, end: 4.350, name: "Notch 6" },
+    { start: 5.080, end: 5.210, name: "Notch 7" },
+    { start: 5.460, end: 5.590, name: "Notch 8" },
+    { start: 6.520, end: 6.650, name: "Notch 9" },
+    { start: 7.370, end: 7.500, name: "Notch 10" }
+  ];
 
+  const [notchPositions, setNotchPositions] = useState(initialNotches);
+  const [tempNotchPositions, setTempNotchPositions] = useState(initialNotches);
+  const [hasChanges, setHasChanges] = useState(false);
+
+  /**
+   * Inicializa OpenCASCADE.js y crea la geometría 3D
+   * Se ejecuta una sola vez al montar el componente
+   */
   useEffect(() => {
     let mounted = true;
 
+    // Inicializar OpenCASCADE.js (WebAssembly)
+    // Esto carga la librería OpenCASCADE en el navegador
     initOpenCascade()
       .then((occ) => {
         if (!mounted) return;
         try {
-          // Create a simple box as our 3D model
-          const box = new occ.BRepPrimAPI_MakeBox_2(1, 1, 1);
-          const boxShape = box.Shape();
+          // Factor de conversión: 1 pulgada = 25.4 mm
+          const INCH_TO_MM = 25.4;
 
-          // Store references for export
-          setOcc(occ);
-          setBoxShape(boxShape);
+          // 1. Crear barra principal (1/2" x 1/2" x 8.000")
+          let mainBody = new occ.BRepPrimAPI_MakeBox_2(0.5 * INCH_TO_MM, 8.000 * INCH_TO_MM, 0.5 * INCH_TO_MM).Shape();
 
-          // Visualize the shape and get the GLB URL
-          const url = visualizeShapes(occ, boxShape);
+          // 2. Crear muescas
+          notchPositions.forEach((notch) => {
+            try {
+              // Crear muesca
+              const innerSquare = new occ.BRepPrimAPI_MakeBox_2(
+                0.5 * INCH_TO_MM,    // width
+                0.130 * INCH_TO_MM,  // height
+                0.130 * INCH_TO_MM   // depth
+              ).Shape();
+
+              // Posicionar muesca
+              const trsf = new occ.gp_Trsf_1();
+              const xyz = new occ.gp_XYZ_1();
+              xyz.SetX(0);
+              xyz.SetY(notch.end * INCH_TO_MM);
+              xyz.SetZ(0);
+              trsf.SetTranslation_1(new occ.gp_Vec_3(xyz));
+
+              const translatedInnerSquare = new occ.BRepBuilderAPI_Transform_2(
+                innerSquare,
+                trsf,
+                false
+              ).Shape();
+
+              // Cortar muesca
+              const cutOperation = new occ.BRepAlgoAPI_Cut_3(
+                mainBody,
+                translatedInnerSquare,
+                new occ.Message_ProgressRange_1()
+              );
+              cutOperation.Build(new occ.Message_ProgressRange_1());
+
+              if (cutOperation.IsDone()) {
+                mainBody = cutOperation.Shape();
+              }
+
+              // Limpiar memoria
+              [trsf, xyz, translatedInnerSquare, innerSquare, cutOperation].forEach(obj => obj.delete());
+
+            } catch (error) {
+              console.log(`Error creando ${notch.name}:`, error.message);
+            }
+          });
+
+          // 4. El resultado final es mainBody con todos los agujeros
+          const finalShape = mainBody;
+
+          // Almacenar referencias para la exportación STEP
+          setOcc(occ);           // Instancia de OpenCASCADE
+          setBoxShape(finalShape); // Forma 3D con muesca
+
+          // Generar visualización 3D y obtener URL del modelo GLB
+          const url = visualizeShapes(occ, finalShape);
           setModelUrl(url);
           setLoading(false);
         } catch (err) {
@@ -43,62 +134,73 @@ export const App = () => {
         setLoading(false);
       });
 
+    // Cleanup: prevenir actualizaciones de estado si el componente se desmonta
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [notchPositions]);
 
+  // Funciones de actualización simplificadas
+  const updateTempNotchEnd = (index, newEnd) => {
+    setTempNotchPositions(prev => 
+      prev.map((notch, i) => 
+        i === index ? { ...notch, end: parseFloat(newEnd) || 0 } : notch
+      )
+    );
+    setHasChanges(true);
+  };
+
+  const applyChanges = () => {
+    setNotchPositions([...tempNotchPositions]);
+    setHasChanges(false);
+  };
+
+  const cancelChanges = () => {
+    setTempNotchPositions([...notchPositions]);
+    setHasChanges(false);
+  };
+
+  // Función de exportación simplificada
   const handleExportStep = () => {
     if (!occ || !boxShape) return;
 
     setExporting(true);
     try {
-      // Crear STEP Writer usando la implementación correcta
       const stepWriter = new occ.STEPControl_Writer_1();
-      console.log("STEP Writer creado");
       
-      // Transferir la forma al modelo STEP
-      const transferStatus = stepWriter.Transfer(boxShape, occ.STEPControl_StepModelType.STEPControl_AsIs, true, new occ.Message_ProgressRange_1());
-      
+      const transferStatus = stepWriter.Transfer(
+        boxShape,
+        occ.STEPControl_StepModelType.STEPControl_AsIs,
+        true,
+        new occ.Message_ProgressRange_1()
+      );
+
       if (transferStatus !== occ.IFSelect_ReturnStatus.IFSelect_RetDone) {
-        throw new Error(`Error transfiriendo forma al modelo STEP: ${transferStatus}`);
+        throw new Error(`Error transfiriendo forma: ${transferStatus}`);
       }
-      console.log("Forma transferida al modelo STEP exitosamente");
-      
-      // Escribir a un archivo temporal y leerlo
+
       const tempFileName = "temp_model.step";
       const writeResult = stepWriter.Write(tempFileName);
-      
+
       if (writeResult === occ.IFSelect_ReturnStatus.IFSelect_RetDone) {
-        console.log("Archivo STEP escrito exitosamente");
-        
-        // Leer el archivo desde el sistema de archivos virtual
         const stepData = occ.FS.readFile(tempFileName, { encoding: "binary" });
-        console.log(`Datos STEP leídos, tamaño: ${stepData.length} bytes`);
-        
-        // Crear blob y descargar
         const blob = new Blob([stepData.buffer], { type: "application/step" });
         const url = window.URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.href = url;
-        link.download = "mi_modelo.step";
+        link.download = "token_model.step";
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
         window.URL.revokeObjectURL(url);
-        
-        console.log("Archivo STEP exportado exitosamente");
       } else {
-        throw new Error(`Error escribiendo archivo STEP: ${writeResult}`);
+        throw new Error(`Error escribiendo archivo: ${writeResult}`);
       }
-      
-      // Cleanup de memoria
+
       stepWriter.delete();
-      console.log("Memoria liberada");
-      
     } catch (error) {
       console.error("Error exportando STEP:", error);
-      setError("Error al exportar archivo STEP: " + error.message);
+      setError("Error al exportar: " + error.message);
     } finally {
       setExporting(false);
     }
@@ -106,7 +208,16 @@ export const App = () => {
 
   if (loading) {
     return (
-      <div>
+      <div style={{ 
+        padding: "20px", 
+        backgroundColor: "#000000", 
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
+        alignItems: "center",
+        color: "#ffffff"
+      }}>
         <h1>Generate Token App</h1>
         <p>Loading 3D model...</p>
       </div>
@@ -115,7 +226,16 @@ export const App = () => {
 
   if (error) {
     return (
-      <div>
+      <div style={{ 
+        padding: "20px", 
+        backgroundColor: "#000000", 
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
+        alignItems: "center",
+        color: "#ffffff"
+      }}>
         <h1>Generate Token App</h1>
         <p>Error: {error}</p>
       </div>
@@ -123,19 +243,40 @@ export const App = () => {
   }
 
   return (
-    <div style={{ padding: "20px", maxWidth: "600px", margin: "0 auto" }}>
+    <div style={{ 
+      padding: "20px", 
+      maxWidth: "600px", 
+      margin: "0 auto",
+      backgroundColor: "#000000",
+      minHeight: "100vh",
+      color: "#ffffff"
+    }}>
+      {/* Título principal de la aplicación */}
       <h1>Exportador de STEP</h1>
       <p>Visualiza y exporta tu modelo 3D como archivo STEP</p>
-      
+
+      {/* Panel de configuración de muescas */}
+      <NotchConfigurationPanel
+        tempNotchPositions={tempNotchPositions}
+        hasChanges={hasChanges}
+        onUpdateNotchEnd={updateTempNotchEnd}
+        onApplyChanges={applyChanges}
+        onCancelChanges={cancelChanges}
+      />
+
+      {/* Solo mostrar el visor y botón cuando el modelo esté listo */}
       {modelUrl && (
         <>
+          {/* Visor 3D usando model-viewer de Google */}
+          {/* Muestra el modelo GLB generado por OpenCASCADE */}
           <model-viewer
             src={modelUrl}
             camera-controls
             enable-pan
             style={{ width: "100%", height: "400px", border: "1px solid #ddd", borderRadius: "8px" }}
           />
-          
+
+          {/* Controles de exportación */}
           <div style={{ marginTop: "20px", textAlign: "center" }}>
             <button
               onClick={handleExportStep}

@@ -19,7 +19,7 @@ export function visualizeShapes(oc, shapes_) {
   for (const s of shapes) {
     shapeTool.SetShape(shapeTool.NewShape(), s);
     // Tell OpenCascade that we want our shape to get meshed
-    new oc.BRepMesh_IncrementalMesh_2(s, 0.1, false, 0.1, false);
+    new oc.BRepMesh_IncrementalMesh_2(s, 0.01, false, 0.01, false);
   }
 
   // Return our visualized document
